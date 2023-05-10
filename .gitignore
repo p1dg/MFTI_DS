@@ -2,3 +2,4 @@
 .gitattributes
 .DS_Store
 Python. Уровень Advanced/Python Advanced. Функции. Домашнее задание (HW) /.ipynb_checkpoints/HW_01-checkpoint.ipynb
+*.csv
