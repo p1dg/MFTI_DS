@@ -14,10 +14,11 @@ from tqdm import tqdm
 
 cv2.ocl.setUseOpenCL(False)
 
-Transition = namedtuple('Transion',('state', 'action', 'next_state', 'reward'))
+Transition = namedtuple("Transion", ("state", "action", "next_state", "reward"))
+
 
 class DQNbn(nn.Module):
-    def __init__(self, in_channels=4, n_actions=6):
+    def __init__(self, in_channels=4, n_actions=4):
         """
         Initialize Deep Q Network
 
@@ -34,7 +35,7 @@ class DQNbn(nn.Module):
         self.bn3 = nn.BatchNorm2d(64)
         self.fc4 = nn.Linear(7 * 7 * 64, 512)
         self.head = nn.Linear(512, n_actions)
-        
+
     def forward(self, x):
         x = x.float() / 255
         x = relu(self.bn1(self.conv1(x)))
@@ -43,31 +44,33 @@ class DQNbn(nn.Module):
         x = relu(self.fc4(x.view(x.size(0), -1)))
         return self.head(x)
 
+
 class ReplayMemory(object):
     def __init__(self, capacity):
         self.capacity = capacity
         self.memory = []
-        self.position = 0
-        
+
     def push(self, *args):
-        if len(self.memory) < self.capacity:
-            self.memory = self.memory[1:]
+        # if len(self.memory) >= self.capacity:
+        #     self.memory = self.memory[1:]
         self.memory.append(Transition(*args))
 
     def sample(self, batch_size):
         return random.sample(self.memory, batch_size)
-    
+
     def __len__(self):
         return len(self.memory)
 
-def make_env(env, stack_frames=True, episodic_life=True, clip_rewards=False, scale=False):
+
+def make_env(
+    env, stack_frames=True, episodic_life=True, clip_rewards=False, scale=False
+):
     if episodic_life:
         env = EpisodicLifeEnv(env)
 
     env = NoopResetEnv(env, noop_max=30)
     env = MaxAndSkipEnv(env, skip=4)
-    if 'FIRE' in env.unwrapped.get_action_meanings():
-        print('FIRE')
+    if "FIRE" in env.unwrapped.get_action_meanings():
         env = FireResetEnv(env)
 
     env = WarpFrame(env)
@@ -76,6 +79,7 @@ def make_env(env, stack_frames=True, episodic_life=True, clip_rewards=False, sca
     if clip_rewards:
         env = ClipRewardEnv(env)
     return env
+
 
 class RewardScaler(gym.RewardWrapper):
 
@@ -120,6 +124,7 @@ class LazyFrames(object):
     def __getitem__(self, i):
         return self._force()[i]
 
+
 class FrameStack(gym.Wrapper):
     def __init__(self, env, k):
         """Stack k last frames.
@@ -132,7 +137,12 @@ class FrameStack(gym.Wrapper):
         self.k = k
         self.frames = deque([], maxlen=k)
         shp = env.observation_space.shape
-        self.observation_space = gym.spaces.Box(low=0, high=255, shape=(shp[0], shp[1], shp[2] * k), dtype=env.observation_space.dtype)
+        self.observation_space = gym.spaces.Box(
+            low=0,
+            high=255,
+            shape=(shp[0], shp[1], shp[2] * k),
+            dtype=env.observation_space.dtype,
+        )
 
     def reset(self):
         ob = self.env.reset()
@@ -156,12 +166,15 @@ class WarpFrame(gym.ObservationWrapper):
         gym.ObservationWrapper.__init__(self, env)
         self.width = 84
         self.height = 84
-        self.observation_space = gym.spaces.Box(low=0, high=255,
-            shape=(self.height, self.width, 1), dtype=np.uint8)
+        self.observation_space = gym.spaces.Box(
+            low=0, high=255, shape=(self.height, self.width, 1), dtype=np.uint8
+        )
 
     def observation(self, frame):
         frame = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
-        frame = cv2.resize(frame, (self.width, self.height), interpolation=cv2.INTER_AREA)
+        frame = cv2.resize(
+            frame, (self.width, self.height), interpolation=cv2.INTER_AREA
+        )
         return frame[:, :, None]
 
 
@@ -169,7 +182,7 @@ class FireResetEnv(gym.Wrapper):
     def __init__(self, env=None):
         """For environments where the user need to press FIRE for the game to start."""
         super(FireResetEnv, self).__init__(env)
-        assert env.unwrapped.get_action_meanings()[1] == 'FIRE'
+        assert env.unwrapped.get_action_meanings()[1] == "FIRE"
         assert len(env.unwrapped.get_action_meanings()) >= 3
 
     def step(self, action):
@@ -255,6 +268,7 @@ class MaxAndSkipEnv(gym.Wrapper):
         self._obs_buffer.append(obs)
         return obs
 
+
 class NoopResetEnv(gym.Wrapper):
     def __init__(self, env=None, noop_max=30):
         """Sample initial states by taking random number of no-ops on reset.
@@ -263,13 +277,13 @@ class NoopResetEnv(gym.Wrapper):
         super(NoopResetEnv, self).__init__(env)
         self.noop_max = noop_max
         self.override_num_noops = None
-        assert env.unwrapped.get_action_meanings()[0] == 'NOOP'
+        assert env.unwrapped.get_action_meanings()[0] == "NOOP"
 
     def step(self, action):
         return self.env.step(action)
 
     def reset(self):
-        """ Do no-op action for a number of steps in [1, noop_max]."""
+        """Do no-op action for a number of steps in [1, noop_max]."""
         self.env.reset()
         if self.override_num_noops is not None:
             noops = self.override_num_noops
@@ -283,24 +297,39 @@ class NoopResetEnv(gym.Wrapper):
                 obs = self.env.reset()
         return obs
 
+
 def get_state(obs):
     state = np.array(obs)
     state = state.transpose((2, 0, 1))
     state = torch.from_numpy(state)
     return state.unsqueeze(0)
 
+
 def select_action(state, eps_end, eps_start, eps_decay, policy_net, device, steps_done):
     sample = random.random()
-    eps_threshold = eps_end + (eps_start - eps_end)* \
-        math.exp(-1. * steps_done / eps_decay)
+    eps_threshold = eps_end + (eps_start - eps_end) * math.exp(
+        -1.0 * steps_done / eps_decay
+    )
     steps_done += 1
     if sample > eps_threshold:
         with torch.no_grad():
-            return policy_net(state.to(device)).max(1)[1].view(1,1), steps_done
+            return policy_net(state.to(device)).max(1)[1].view(1, 1), steps_done
     else:
-        return torch.tensor([[random.randrange(6)]], device=device, dtype=torch.long), steps_done
-    
-def optimize_model(memory, batch_size, device, policy_net, target_net, gamma, optimizer, ):
+        return (
+            torch.tensor([[random.randrange(4)]], device=device, dtype=torch.long),
+            steps_done,
+        )
+
+
+def optimize_model(
+    memory,
+    batch_size,
+    device,
+    policy_net,
+    target_net,
+    gamma,
+    optimizer,
+):
     if len(memory) < batch_size:
         return policy_net, optimizer
     transitions = memory.sample(batch_size)
@@ -313,47 +342,72 @@ def optimize_model(memory, batch_size, device, policy_net, target_net, gamma, op
     batch.action - tuple of all the actions (each action is an int)    
     """
     batch = Transition(*zip(*transitions))
-    
-    actions = tuple((map(lambda a: torch.tensor([[a]], device='cuda'), batch.action))) 
-    rewards = tuple((map(lambda r: torch.tensor([r], device='cuda'), batch.reward))) 
+
+    actions = tuple((map(lambda a: torch.tensor([[a]], device="cuda"), batch.action)))
+    rewards = tuple((map(lambda r: torch.tensor([r], device="cuda"), batch.reward)))
 
     non_final_mask = torch.tensor(
         tuple(map(lambda s: s is not None, batch.next_state)),
-        device=device, dtype=torch.uint8)
-    
-    non_final_next_states = torch.cat([s for s in batch.next_state
-                                       if s is not None]).to('cuda')
-    
+        device=device,
+        dtype=torch.uint8,
+    )
 
-    state_batch = torch.cat(batch.state).to('cuda')
+    non_final_next_states = torch.cat(
+        [s for s in batch.next_state if s is not None]
+    ).to("cuda")
+
+    state_batch = torch.cat(batch.state).to("cuda")
     action_batch = torch.cat(actions)
     reward_batch = torch.cat(rewards)
-    
+
     state_action_values = policy_net(state_batch).gather(1, action_batch)
-    
+
     next_state_values = torch.zeros(batch_size, device=device)
-    next_state_values[non_final_mask] = target_net(non_final_next_states).max(1)[0].detach()
+    next_state_values[non_final_mask] = (
+        target_net(non_final_next_states).max(1)[0].detach()
+    )
     expected_state_action_values = (next_state_values * gamma) + reward_batch
-    
-    loss = torch.nn.functional.smooth_l1_loss(state_action_values, expected_state_action_values.unsqueeze(1))
-    
+
+    loss = torch.nn.functional.smooth_l1_loss(
+        state_action_values, expected_state_action_values.unsqueeze(1)
+    )
+
     optimizer.zero_grad()
     loss.backward()
     for param in policy_net.parameters():
         param.grad.data.clamp_(-1, 1)
     optimizer.step()
     return policy_net, optimizer
-   
-def train(env, n_episodes, memory, device, initial_memory, policy_net, target_net, gamma, optimizer, batch_size, target_update, eps_end, eps_start, eps_decay, render=False):
+
+
+def train(
+    env,
+    n_episodes,
+    memory,
+    device,
+    initial_memory,
+    policy_net,
+    target_net,
+    gamma,
+    optimizer,
+    batch_size,
+    target_update,
+    eps_end,
+    eps_start,
+    eps_decay,
+    render=False,
+):
     steps_done = 0
     for episode in tqdm(range(n_episodes)):
         obs = env.reset()
         state = get_state(obs)
         total_reward = 0.0
         for t in count():
-            action, steps_done = select_action(state, eps_end, eps_start, eps_decay, policy_net, device, steps_done)
+            action, steps_done = select_action(
+                state, eps_end, eps_start, eps_decay, policy_net, device, steps_done
+            )
 
-            if render:
+            if render and episode % 5 == 0:
                 env.render()
 
             obs, reward, done, info = env.step(action)
@@ -371,14 +425,26 @@ def train(env, n_episodes, memory, device, initial_memory, policy_net, target_ne
             state = next_state
 
             if steps_done > initial_memory:
-                policy_net, optimizer = optimize_model(memory, batch_size, device, policy_net, target_net, gamma, optimizer,)
+                policy_net, optimizer = optimize_model(
+                    memory,
+                    batch_size,
+                    device,
+                    policy_net,
+                    target_net,
+                    gamma,
+                    optimizer,
+                )
 
                 if steps_done % target_update == 0:
                     target_net.load_state_dict(policy_net.state_dict())
 
             if done:
                 break
-        if episode % 5 == 0:
-            print('Total steps: {} \t Episode: {}/{} \t Total reward: {}'.format(steps_done, episode, t, total_reward))
+        if episode % 1 == 0:
+            print(
+                "Total steps: {} \t Episode: {}/{} \t Total reward: {}".format(
+                    steps_done, episode, t, total_reward
+                )
+            )
     env.close()
     return policy_net
