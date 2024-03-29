@@ -4,3 +4,6 @@
 Python. Уровень Advanced/Python Advanced. Функции. Домашнее задание (HW) /.ipynb_checkpoints/HW_01-checkpoint.ipynb
 *.csv
 *video
+__pycache__
+*png
+models

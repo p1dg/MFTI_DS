@@ -259,7 +259,7 @@ class EpisodicLifeEnv(gym.Wrapper):
             self.was_real_reset = True
         else:
             # no-op step to advance from terminal/lost life state
-            obs, _, _, _ = self.env.step(0)
+            obs, _, _, _, _ = self.env.step(0)
             self.was_real_reset = False
         self.lives = self.env.unwrapped.ale.lives()
         return obs
@@ -475,7 +475,7 @@ def train(
                     rewards_list.append(total_reward)
                     loss_list.append(total_loss)
                 break
-        if episode % 1 == 0:
+        if episode % 10 == 0 and steps_done > initial_memory:
             eps_threshold = eps_end + (eps_start - eps_end) * math.exp(
                 -1.0 * steps_done / eps_decay
             )
