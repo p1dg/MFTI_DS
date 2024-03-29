@@ -13,6 +13,7 @@ from itertools import count
 from tqdm import tqdm
 
 cv2.ocl.setUseOpenCL(False)
+torch.manual_seed(42)
 
 Transition = namedtuple("Transion", ("state", "action", "next_state", "reward"))
 
@@ -45,14 +46,37 @@ class DQNbn(nn.Module):
         return self.head(x)
 
 
+class DQN(nn.Module):
+    def __init__(self, in_channels, n_actions):
+        super().__init__()
+        self.conv1 = nn.Conv2d(in_channels, 32, kernel_size=8, stride=4)
+        self.conv2 = nn.Conv2d(32, 64, kernel_size=4, stride=2)
+        self.conv3 = nn.Conv2d(64, 64, kernel_size=3, stride=1)
+        self.fc1 = nn.Linear(64 * 7 * 7, 512)
+        self.fc2 = nn.Linear(512, n_actions)
+
+    def forward(self, x):
+        """
+        Input shape: (bs,c,h,w) #(bs,4,84,84)
+        Output shape: (bs,n_actions)
+        """
+        x = x.float() / 255
+        x = relu(self.conv1(x))
+        x = relu(self.conv2(x))
+        x = relu(self.conv3(x))
+        x = torch.flatten(x, 1)
+        x = relu(self.fc1(x))
+        return self.fc2(x)
+
+
 class ReplayMemory(object):
     def __init__(self, capacity):
         self.capacity = capacity
         self.memory = []
 
     def push(self, *args):
-        # if len(self.memory) >= self.capacity:
-        #     self.memory = self.memory[1:]
+        if len(self.memory) >= self.capacity:
+            self.memory = self.memory[1:]
         self.memory.append(Transition(*args))
 
     def sample(self, batch_size):
@@ -179,6 +203,7 @@ class WarpFrame(gym.ObservationWrapper):
 
 
 class FireResetEnv(gym.Wrapper):
+
     def __init__(self, env=None):
         """For environments where the user need to press FIRE for the game to start."""
         super(FireResetEnv, self).__init__(env)
@@ -188,7 +213,7 @@ class FireResetEnv(gym.Wrapper):
     def step(self, action):
         return self.env.step(action)
 
-    def reset(self):
+    def reset(self, seed=42):
         self.env.reset()
         obs, _, done, _ = self.env.step(1)
         if done:
@@ -210,7 +235,8 @@ class EpisodicLifeEnv(gym.Wrapper):
         self.was_real_reset = False
 
     def step(self, action):
-        obs, reward, done, _, info = self.env.step(action)
+        obs, reward, terminated, truncated, info = self.env.step(action)
+        done = terminated or truncated
         self.was_real_done = done
         # check current lives, make loss of life terminal,
         # then update lives to handle bonus lives
@@ -261,7 +287,7 @@ class MaxAndSkipEnv(gym.Wrapper):
 
         return max_frame, total_reward, done, info
 
-    def reset(self):
+    def reset(self, seed=42):
         """Clear past frame buffer and init. to first obs. from inner env."""
         self._obs_buffer.clear()
         obs = self.env.reset()
@@ -331,7 +357,7 @@ def optimize_model(
     optimizer,
 ):
     if len(memory) < batch_size:
-        return policy_net, optimizer
+        return policy_net, optimizer, None
     transitions = memory.sample(batch_size)
     """
     zip(*transitions) unzips the transitions into
@@ -377,10 +403,11 @@ def optimize_model(
     for param in policy_net.parameters():
         param.grad.data.clamp_(-1, 1)
     optimizer.step()
-    return policy_net, optimizer
+    return policy_net, optimizer, loss
 
 
 def train(
+    model_name,
     env,
     n_episodes,
     memory,
@@ -398,10 +425,13 @@ def train(
     render=False,
 ):
     steps_done = 0
+    rewards_list = []
+    loss_list = []
     for episode in tqdm(range(n_episodes)):
         obs = env.reset()
         state = get_state(obs)
         total_reward = 0.0
+        total_loss = 0.0
         for t in count():
             action, steps_done = select_action(
                 state, eps_end, eps_start, eps_decay, policy_net, device, steps_done
@@ -425,7 +455,7 @@ def train(
             state = next_state
 
             if steps_done > initial_memory:
-                policy_net, optimizer = optimize_model(
+                policy_net, optimizer, loss = optimize_model(
                     memory,
                     batch_size,
                     device,
@@ -434,17 +464,24 @@ def train(
                     gamma,
                     optimizer,
                 )
+                if loss is not None:
+                    total_loss += loss.item()
 
                 if steps_done % target_update == 0:
                     target_net.load_state_dict(policy_net.state_dict())
 
             if done:
+                if steps_done > initial_memory:
+                    rewards_list.append(total_reward)
+                    loss_list.append(total_loss)
                 break
         if episode % 1 == 0:
-            print(
-                "Total steps: {} \t Episode: {}/{} \t Total reward: {}".format(
-                    steps_done, episode, t, total_reward
-                )
+            eps_threshold = eps_end + (eps_start - eps_end) * math.exp(
+                -1.0 * steps_done / eps_decay
             )
+            print(
+                f"Total steps: {steps_done} \t Episode: {episode}/{t} \t Total reward episode: {total_reward} Total loss: {total_loss} \t Avg_10 loss: {np.mean(loss_list[-10:])} \t Avg_10 total_reward: {np.mean(rewards_list[-10:])}  \t eps_threshold: {eps_threshold}"
+            )
+        torch.save(policy_net, f"models/{model_name}_{episode}")
     env.close()
-    return policy_net
+    return policy_net, rewards_list, loss_list
