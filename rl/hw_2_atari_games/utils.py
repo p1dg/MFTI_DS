@@ -12,6 +12,9 @@ import math
 from itertools import count
 from tqdm import tqdm
 
+import pickle
+
+
 cv2.ocl.setUseOpenCL(False)
 torch.manual_seed(42)
 
@@ -427,7 +430,9 @@ def train(
     steps_done = 0
     rewards_list = []
     loss_list = []
-    for episode in tqdm(range(n_episodes)):
+    steps_list = []
+    pbar = tqdm(range(n_episodes), desc="")
+    for episode in pbar:
         obs = env.reset()
         state = get_state(obs)
         total_reward = 0.0
@@ -472,6 +477,7 @@ def train(
 
             if done:
                 if steps_done > initial_memory:
+                    steps_list.append(t)
                     rewards_list.append(total_reward)
                     loss_list.append(total_loss)
                 break
@@ -479,9 +485,18 @@ def train(
             eps_threshold = eps_end + (eps_start - eps_end) * math.exp(
                 -1.0 * steps_done / eps_decay
             )
-            print(
-                f"Total steps: {steps_done} \t Episode: {episode}/{t} \t Total reward episode: {total_reward} Total loss: {total_loss} \t Avg_10 loss: {np.mean(loss_list[-10:])} \t Avg_10 total_reward: {np.mean(rewards_list[-10:])}  \t eps_threshold: {eps_threshold}"
+            pbar.set_description(
+                f"steps: {steps_done} avg_10 steps {np.mean(steps_list[-10:]):.3} reward: {total_reward} loss: {total_loss:.3} avg_10 loss: {np.mean(loss_list[-10:]):.3} avg_10 reward: {np.mean(rewards_list[-10:]):.3} eps: {eps_threshold:.3}"
             )
-        torch.save(policy_net, f"models/{model_name}_{episode}")
+
+        if episode % 100 == 0 and steps_done > initial_memory:
+            with open("steps_list.pkl", "wb") as file:
+                pickle.dump(steps_list, file)
+            with open("loss_list.pkl", "wb") as file:
+                pickle.dump(loss_list, file)
+            with open("rewards_list.pkl", "wb") as file:
+                pickle.dump(rewards_list, file)
+
+            torch.save(policy_net, f"models/{model_name}_{episode}")
     env.close()
     return policy_net, rewards_list, loss_list
