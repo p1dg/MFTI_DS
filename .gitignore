@@ -8,3 +8,6 @@ __pycache__
 *png
 models
 *pkl
+d3rlpy_logs
+d3rlpy_data
+*.h5
